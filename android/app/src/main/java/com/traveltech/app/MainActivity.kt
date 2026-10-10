@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.RingtoneManager
+import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -256,6 +259,8 @@ class AndroidBridge(
     private val context: Context,
     private val vibrator: Vibrator?
 ) {
+    private var toneGenerator: ToneGenerator? = null
+
     @JavascriptInterface
     fun getBaseUrl(): String {
         return ""
@@ -275,6 +280,21 @@ class AndroidBridge(
             Log.e("AndroidBridge", "Vibration failed", e)
         }
 
+        // Play loud audible siren tone offline with ToneGenerator / RingtoneManager
+        try {
+            if (toneGenerator == null) {
+                toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+            }
+            toneGenerator?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 3500)
+        } catch (e: Exception) {
+            try {
+                val alertSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val ringtone = RingtoneManager.getRingtone(context, alertSound)
+                ringtone?.play()
+            } catch (ignored: Exception) {}
+        }
+
         showNotification("🚨 Hazard Alert!", details)
     }
 
@@ -284,6 +304,13 @@ class AndroidBridge(
             vibrator?.cancel()
         } catch (e: Exception) {
             Log.e("AndroidBridge", "Stop vibration failed", e)
+        }
+        try {
+            toneGenerator?.stopTone()
+            toneGenerator?.release()
+            toneGenerator = null
+        } catch (e: Exception) {
+            Log.e("AndroidBridge", "Stop tone failed", e)
         }
     }
 
