@@ -1561,9 +1561,14 @@
             <span style="font-size: 18px;">📍</span>
             <span data-i18n="title_current_loc">Current Location</span>
           </div>
-          <button class="btn btn-outline" style="padding: 5px 12px; font-size: 11px;" onclick="promptManualLocationInput('current')">
-            <span data-i18n="btn_change_location">Change Location</span>
-          </button>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <button class="btn btn-outline" style="padding: 5px 12px; font-size: 11px;" onclick="restoreMyGPSLocation()">
+              <span data-i18n="btn_my_gps">📍 My GPS</span>
+            </button>
+            <button class="btn btn-outline" style="padding: 5px 12px; font-size: 11px;" onclick="promptManualLocationInput('current')">
+              <span data-i18n="btn_change_location">Change Location</span>
+            </button>
+          </div>
         </div>
         <div style="margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
           <div id="currentLocationNameDisplay" style="font-size: 18px; font-weight: 800; color: var(--text-main); letter-spacing: -0.3px;" data-i18n="default_city_name">
@@ -1665,9 +1670,6 @@
           <span data-i18n="btn_dest_route">Destination Route</span>
         </button>
 
-        <div id="routeStatusCard" class="route-details-panel" style="display:none; margin-top: 14px;">
-          <div id="routeStatusBadge" class="badge badge-safe">SAFE CORRIDOR</div>
-        </div>
 
         <!-- Live Safety & Hazard Alerts for Destination Route (Today, 1 Week, 2 Weeks) -->
         <div id="destHazardAlertsCard" class="card" style="margin-top: 14px; border: 1px solid var(--card-border); box-shadow: none; padding: 14px;">
@@ -2518,6 +2520,7 @@
         tab_source_dest: "Source to Dest",
         title_current_loc: "Current Location",
         btn_change_location: "Change Location",
+        btn_my_gps: "📍 My GPS",
         loc_denied_title: "Location access is not enabled.",
         loc_denied_desc: "Defaulted to",
         loc_denied_sub: "You can enable GPS in your browser or manually enter your city to monitor hazards for your area.",
@@ -4070,8 +4073,6 @@
         }
 
         // 5. Reset assessed target to current GPS position
-        sourceLat = userLat;
-        sourceLon = userLon;
         currentAssessedLat = userLat;
         currentAssessedLon = userLon;
         currentAssessedName = userName || "Chennai, India";
@@ -4089,8 +4090,6 @@
         currentLocationCard.style.display = 'none';
         sourceCard.style.display = 'none';
         destCard.style.display = 'block';
-        sourceLat = userLat;
-        sourceLon = userLon;
         if (destLat && destLon) {
           assessLocation(destLat, destLon, destName);
         } else {
@@ -4197,6 +4196,10 @@
     }
 
     // Auto-detect GPS with Comprehensive Fallback & Permission Denial Handling
+    let deviceGpsLat = null;
+    let deviceGpsLon = null;
+    let deviceGpsName = null;
+
     function autoDetectGPS(isManualRetry = false) {
       if (isManualRetry) {
         isManualLocationSet = false;
@@ -4213,11 +4216,12 @@
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => {
-            if (isManualLocationSet) return;
+            if (isManualLocationSet && !isManualRetry) return;
+            isManualLocationSet = false;
             userLat = pos.coords.latitude;
             userLon = pos.coords.longitude;
-            sourceLat = userLat;
-            sourceLon = userLon;
+            deviceGpsLat = userLat;
+            deviceGpsLon = userLon;
 
             // GPS is active and granted: completely hide fallback notice column
             if (banner) banner.classList.remove('active');
@@ -4231,6 +4235,7 @@
                   const formattedName = data.short_name || (data.city ? (data.country ? `${data.city}, ${data.country}` : data.city) : (data.display_name ? data.display_name.split(',').slice(0, 2).join(', ') : ''));
                   if (formattedName) {
                     userName = formattedName;
+                    deviceGpsName = userName;
                     currentAssessedName = userName;
                     const nameDisp = document.getElementById('currentLocationNameDisplay');
                     if (nameDisp) nameDisp.innerText = userName;
@@ -4241,11 +4246,19 @@
                 }
               }).catch(() => {});
 
-            // Update user marker on map
+            // Update user marker on map and center
             if (map && mapInitialized) {
               renderUserLocationMarker(userLat, userLon, userName);
-              map.setView([userLat, userLon], 12);
+              map.setView([userLat, userLon], 13);
+              if (userLocationMarker) {
+                userLocationMarker.openPopup();
+              }
             }
+
+            // Immediately update safe shelters for real GPS location
+            const shelters = SafeShelterEngine.getShelters(userLat, userLon);
+            renderSheltersList(shelters);
+            renderSheltersOnMap(userLat, userLon);
 
             assessLocation(userLat, userLon, userName);
           },
@@ -4255,48 +4268,57 @@
             if (banner) banner.classList.add('active');
             if (changeBtn) changeBtn.style.display = 'inline-flex';
 
-            const defaultCity = t('default_city_name', 'Chennai, India');
-            userLat = 13.0827;
-            userLon = 80.2707;
-            sourceLat = userLat;
-            sourceLon = userLon;
-            userName = defaultCity;
+            if (!userLat || isManualRetry) {
+              const defaultCity = t('default_city_name', 'Chennai, India');
+              userLat = 13.0827;
+              userLon = 80.2707;
+              userName = defaultCity;
 
-            document.getElementById('currentLocationNameDisplay').innerText = defaultCity;
-            const fallbackNotice = document.getElementById('fallbackLocationNotice');
-            if (fallbackNotice) fallbackNotice.innerText = defaultCity;
+              document.getElementById('currentLocationNameDisplay').innerText = defaultCity;
+              const fallbackNotice = document.getElementById('fallbackLocationNotice');
+              if (fallbackNotice) fallbackNotice.innerText = defaultCity;
 
-            assessLocation(userLat, userLon, defaultCity);
+              assessLocation(userLat, userLon, defaultCity);
 
-            if (map && mapInitialized) {
-              renderUserLocationMarker(userLat, userLon, defaultCity);
+              if (map && mapInitialized) {
+                renderUserLocationMarker(userLat, userLon, defaultCity);
+                map.setView([userLat, userLon], 13);
+              }
             }
           },
-          { timeout: 7000, enableHighAccuracy: true, maximumAge: 60000 }
+          { timeout: 7000, enableHighAccuracy: true, maximumAge: isManualRetry ? 0 : 60000 }
         );
       } else {
         // Browser does not support geolocation at all
         if (banner) banner.classList.add('active');
         if (changeBtn) changeBtn.style.display = 'inline-flex';
 
-        const defaultCity = t('default_city_name', 'Chennai, India');
-        userLat = 13.0827;
-        userLon = 80.2707;
-        sourceLat = userLat;
-        sourceLon = userLon;
-        userName = defaultCity;
+        if (!userLat || isManualRetry) {
+          const defaultCity = t('default_city_name', 'Chennai, India');
+          userLat = 13.0827;
+          userLon = 80.2707;
+          userName = defaultCity;
 
-        document.getElementById('currentLocationNameDisplay').innerText = defaultCity;
-        const fallbackNotice = document.getElementById('fallbackLocationNotice');
-        if (fallbackNotice) fallbackNotice.innerText = defaultCity;
+          document.getElementById('currentLocationNameDisplay').innerText = defaultCity;
+          const fallbackNotice = document.getElementById('fallbackLocationNotice');
+          if (fallbackNotice) fallbackNotice.innerText = defaultCity;
 
-        assessLocation(userLat, userLon, defaultCity);
+          assessLocation(userLat, userLon, defaultCity);
+        }
       }
+    }
+
+    // Restore device GPS position cleanly
+    function restoreMyGPSLocation() {
+      isManualLocationSet = false;
+      const banner = document.getElementById('locationPermissionBanner');
+      if (banner) banner.classList.remove('active');
+      autoDetectGPS(true);
     }
 
     // Allow user to retry GPS authorization
     function retryLocationPermission() {
-      autoDetectGPS(true);
+      restoreMyGPSLocation();
     }
 
     // Custom TravelTech Alert Dialog Implementation (Replaces all browser popups)
@@ -4425,8 +4447,6 @@
         isManualLocationSet = true;
         userLat = fLat;
         userLon = fLon;
-        sourceLat = userLat;
-        sourceLon = userLon;
         userName = name;
         currentAssessedLat = userLat;
         currentAssessedLon = userLon;
@@ -4462,9 +4482,16 @@
     }
 
     function detectGPSFromPicker() {
-      isManualLocationSet = false;
+      if (pickerTarget === 'source') {
+        const startLat = deviceGpsLat || userLat;
+        const startLon = deviceGpsLon || userLon;
+        const startName = deviceGpsName || userName || "Current GPS Location";
+        updateSourceLocation(startLat, startLon, startName);
+        closeLocationPickerModal();
+        return;
+      }
       closeLocationPickerModal();
-      autoDetectGPS(true);
+      restoreMyGPSLocation();
     }
 
     async function applyLocPickerSearch() {
@@ -4497,10 +4524,7 @@
     }
 
     function centerMapOnUser() {
-      if (map && userLat && userLon) {
-        map.setView([userLat, userLon], 13);
-        renderUserLocationMarker(userLat, userLon, userName);
-      }
+      restoreMyGPSLocation();
     }
 
     const promptManualLocationInput = openLocationPickerModal;
@@ -4535,10 +4559,15 @@
       }
     }
 
-    async function loadDestHazardAlerts(lat, lon, label, horizon = null) {
+    async function loadDestHazardAlerts(lat = null, lon = null, label = null, horizon = null) {
       const feedEl = document.getElementById('destUnifiedAlertsFeed');
       if (!feedEl) return;
-      if (!lat || !lon) {
+
+      const targetLat = lat || destLat;
+      const targetLon = lon || destLon;
+      const targetLabel = label || destName || "Destination";
+
+      if (!targetLat || !targetLon) {
         feedEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: var(--text-muted);">${t('msg_select_dest_to_view', 'Enter destination to view real-time safety & hazard alerts.')}</div>`;
         return;
       }
@@ -4547,14 +4576,42 @@
 
       const activeHorizon = horizon || destSelectedHorizon || 'today';
       try {
-        const evalResult = await RealHazardEngine.evaluate(lat, lon, label || "Destination", activeHorizon);
-        renderDestAlertCards(evalResult, label || "Destination");
+        const destEval = await RealHazardEngine.evaluate(targetLat, targetLon, targetLabel, activeHorizon);
+        let allHazards = [...(destEval.hazards || [])];
+        let allWarnings = [...(destEval.upcoming_warnings || [])];
+
+        const origLat = (sourceLat != null) ? sourceLat : userLat;
+        const origLon = (sourceLon != null) ? sourceLon : userLon;
+        const origLabel = sourceName || userName || "Starting Point";
+
+        if (origLat && origLon && (Math.abs(origLat - targetLat) > 0.05 || Math.abs(origLon - targetLon) > 0.05)) {
+          try {
+            const srcEval = await RealHazardEngine.evaluate(origLat, origLon, origLabel, activeHorizon);
+            (srcEval.hazards || []).forEach(h => {
+              if (!allHazards.some(x => x.type === h.type && Math.abs(x.center_lat - h.center_lat) < 0.1)) {
+                allHazards.push(h);
+              }
+            });
+            (srcEval.upcoming_warnings || []).forEach(w => {
+              if (!allWarnings.some(x => x.date === w.date && x.locationLabel === w.locationLabel)) {
+                allWarnings.push(w);
+              }
+            });
+          } catch(e) {}
+        }
+
+        renderDestAlertCards({
+          hazards: allHazards,
+          upcoming_warnings: allWarnings,
+          weather: destEval.weather,
+          status: destEval.status
+        }, targetLabel, origLabel);
       } catch(e) {
-        feedEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #16A34A; font-weight: 600;">✓ ${t('all_clear', 'All clear: No severe weather or disaster hazards detected in this region for the selected timeframe.')}</div>`;
+        feedEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #16A34A; font-weight: 600;">✓ ${t('all_clear', 'All clear: No severe weather or disaster hazards detected along this route or destination for the selected timeframe.')}</div>`;
       }
     }
 
-    function renderDestAlertCards(evalResult, locLabel) {
+    function renderDestAlertCards(evalResult, destLabel, srcLabel) {
       const feedEl = document.getElementById('destUnifiedAlertsFeed');
       if (!feedEl) return;
 
@@ -4567,9 +4624,10 @@
         let cardClass = h.severity >= 3 ? 'danger' : 'caution';
         const localizedType = translateHazardType(h.type);
         const activeTitle = t('active_hazard_title', `Active ${h.type}`).replace('{type}', localizedType);
+        const locTag = h.locationLabel || destLabel;
         alertCards.push(`
           <div class="alert-card ${cardClass}" onclick="focusZoneOnMap(${h.center_lat}, ${h.center_lon})">
-            <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">📍 ${locLabel}</div>
+            <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">📍 ${locTag}</div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <span class="alert-title">${activeTitle}</span>
               <span class="badge ${h.severity >= 3 ? 'badge-danger' : 'badge-caution'}">${h.severity >= 3 ? t('status_danger', 'DANGEROUS') : t('status_caution', 'CAUTION')}</span>
@@ -4582,9 +4640,10 @@
       // Forecast warnings (Only if horizon is 1 week or 2 weeks)
       if (destSelectedHorizon !== 'today') {
         warnings.forEach(w => {
+          const locTag = w.locationLabel || destLabel;
           alertCards.push(`
             <div class="alert-card caution">
-              <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">📍 ${locLabel} • ${w.date}</div>
+              <div style="font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">📍 ${locTag} • ${w.date}</div>
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span class="alert-title">⚡ ${t('forecast_title', 'Forecast').replace('{date}', w.date)}</span>
                 <span class="badge badge-caution">${t('status_caution', 'CAUTION')}</span>
@@ -4596,7 +4655,31 @@
       }
 
       if (alertCards.length === 0) {
-        feedEl.innerHTML = `<div style="padding: 12px; font-size: 12px; color: #16A34A; font-weight: 600;">✓ ${t('all_clear', 'All clear: No severe weather or disaster hazards detected in this region for the selected timeframe.')}</div>`;
+        const tw = evalResult.weather || {};
+        const temp = tw.temperature !== undefined ? `${tw.temperature}°C` : '--°C';
+        const wind = tw.wind_gusts !== undefined ? `${tw.wind_gusts} km/h` : '-- km/h';
+        const rain = tw.precipitation !== undefined ? `${tw.precipitation} mm` : '0.0 mm';
+        const nowTime = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        const corridorLabel = srcLabel && destLabel ? `${srcLabel} ➔ ${destLabel}` : (destLabel || "Destination");
+
+        feedEl.innerHTML = `
+          <div class="all-clear-box" style="flex-direction: column; align-items: flex-start; gap: 8px; width: 100%;">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 20px;">✅</span>
+                <span style="font-size: 13px; font-weight: 800; color: #166534;">📍 ${corridorLabel} — ${t('status_safe', 'SAFE')}</span>
+              </div>
+              <span class="badge badge-safe">${t('status_safe', 'SAFE')}</span>
+            </div>
+            <div style="font-size: 11.5px; color: #15803D; line-height: 1.4;">
+              ${t('all_clear', 'All clear: No severe weather or disaster hazards detected along this route or destination for the selected timeframe.')}
+            </div>
+            <div style="font-size: 11px; color: #475569; border-top: 1px solid #BBF7D0; padding-top: 6px; width: 100%; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
+              <span>🌡️ ${temp} | 💨 ${wind} | 🌧️ ${rain}</span>
+              <span>🕒 ${nowTime}</span>
+            </div>
+          </div>
+        `;
       } else {
         feedEl.innerHTML = alertCards.join('');
       }
@@ -5395,69 +5478,95 @@
     }
 
     function updateSourceLocation(lat, lon, label) {
-      sourceLat = lat;
-      sourceLon = lon;
-      sourceName = label || "Pinned Source";
-      document.getElementById('sourceInput').value = sourceName;
+      sourceLat = parseFloat(lat);
+      sourceLon = parseFloat(lon);
+      sourceName = label || "Starting Point";
+      const sInput = document.getElementById('sourceInput');
+      if (sInput) sInput.value = sourceName;
 
       initMapIfNeeded();
-      if (sourceMarker) {
-        sourceMarker.setLatLng([lat, lon]);
-      } else {
-        sourceMarker = L.marker([lat, lon], { draggable: true }).addTo(map);
+      const greenIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+      });
+
+      if (sourceMarker && map) {
+        sourceMarker.setLatLng([sourceLat, sourceLon]);
+        sourceMarker.setIcon(greenIcon);
+      } else if (map) {
+        sourceMarker = L.marker([sourceLat, sourceLon], { draggable: true, icon: greenIcon }).addTo(map);
         sourceMarker.on('dragend', function(e) {
           const pos = e.target.getLatLng();
-          updateSourceLocation(pos.lat, pos.lng, "Pinned Source");
+          updateSourceLocation(pos.lat, pos.lng, "Pinned Starting Point");
         });
       }
-      sourceMarker.bindPopup(`<b>Starting Point:</b><br>${formatCleanLocation(sourceName)}`);
-      
-      if (!destLat) {
-        assessLocation(lat, lon, sourceName);
+      if (sourceMarker) {
+        sourceMarker.bindPopup(`<b>🚩 Starting Point:</b><br>${formatCleanLocation(sourceName)}`);
+        sourceMarker.openPopup();
+      }
+
+      if (destLat && destLon && map) {
+        map.fitBounds([[sourceLat, sourceLon], [destLat, destLon]], { padding: [50, 50] });
+        loadDestHazardAlerts();
+      } else if (map) {
+        map.setView([sourceLat, sourceLon], 12);
       }
       clearRouteDisplay();
     }
 
     function updateDestLocation(lat, lon, label) {
-      destLat = lat;
-      destLon = lon;
+      destLat = parseFloat(lat);
+      destLon = parseFloat(lon);
       destName = label || "Selected Destination";
       const dInput = document.getElementById('destInput');
       if (dInput) dInput.value = destName;
 
       initMapIfNeeded();
-      if (destMarker) {
-        destMarker.setLatLng([lat, lon]);
+      const redIcon = L.icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41]
+      });
+
+      if (destMarker && map) {
+        destMarker.setLatLng([destLat, destLon]);
+        destMarker.setIcon(redIcon);
       } else if (map) {
-        destMarker = L.marker([lat, lon], {
-          icon: L.icon({
-            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-            iconSize: [25, 41],
-            iconAnchor: [12, 41],
-            popupAnchor: [1, -34],
-            shadowSize: [41, 41]
-          })
-        }).addTo(map);
+        destMarker = L.marker([destLat, destLon], { draggable: true, icon: redIcon }).addTo(map);
+        destMarker.on('dragend', function(e) {
+          const pos = e.target.getLatLng();
+          updateDestLocation(pos.lat, pos.lng, "Pinned Destination");
+        });
       }
       if (destMarker) {
-        destMarker.bindPopup(`<b>Destination:</b><br>${formatCleanLocation(destName)}`);
+        destMarker.bindPopup(`<b>🎯 Destination:</b><br>${formatCleanLocation(destName)}`);
         destMarker.openPopup();
       }
-      if (map) {
-        map.invalidateSize();
-        map.setView([lat, lon], 12);
+
+      const startLat = (sourceLat != null) ? sourceLat : userLat;
+      const startLon = (sourceLon != null) ? sourceLon : userLon;
+      if (startLat && startLon && map) {
+        map.fitBounds([[startLat, startLon], [destLat, destLon]], { padding: [50, 50] });
+      } else if (map) {
+        map.setView([destLat, destLon], 12);
       }
       
       // Update destination hazard alerts feed without affecting Current Location
-      loadDestHazardAlerts(lat, lon, destName);
+      loadDestHazardAlerts();
       clearRouteDisplay();
     }
 
     // Evaluate Route with Real Highway Road Geometries (OSRM & GeoJSON)
     async function evaluateRoute() {
-      const origLat = (currentMode === 'source_dest') ? sourceLat : userLat;
-      const origLon = (currentMode === 'source_dest') ? sourceLon : userLon;
+      const origLat = (sourceLat != null) ? sourceLat : userLat;
+      const origLon = (sourceLon != null) ? sourceLon : userLon;
 
       if (!origLat || !origLon) {
         showTravelTechAlert(t('msg_set_starting', "Please set or confirm your starting point."));
@@ -5519,8 +5628,8 @@
     function displayRouteResult(data) {
       clearRouteDisplay();
 
-      const origLat = (currentMode === 'source_dest') ? sourceLat : userLat;
-      const origLon = (currentMode === 'source_dest') ? sourceLon : userLon;
+      const origLat = (sourceLat != null) ? sourceLat : userLat;
+      const origLon = (sourceLon != null) ? sourceLon : userLon;
 
       if (data.routes && data.routes.length > 0) {
         if (!document.body.classList.contains('map-visible')) {
@@ -5548,23 +5657,17 @@
         }).addTo(map);
         routeLayers.push(polyline);
 
+        if (map) {
+          map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+        }
+
         // Render shelters along the route / destination
         renderSheltersOnMap(destLat, destLon);
 
-        // Update route panel in Highway Routing view (Clean status badge only, no clutter)
+        // Safe routes tag removed
         const statusPanel = document.getElementById('routeStatusCard');
-        const statusBadge = document.getElementById('routeStatusBadge');
-        const metricsEl = document.getElementById('routeDetailsMetrics');
         if (statusPanel) {
-          statusPanel.style.display = 'block';
-          if (statusBadge) {
-            statusBadge.className = data.status === 'DESTINATION_UNSAFE' ? 'badge badge-danger' : 'badge badge-safe';
-            statusBadge.innerText = data.status === 'DESTINATION_UNSAFE' ? 'HAZARDS ON ROUTE' : 'SAFE ROUTE';
-          }
-          if (metricsEl) {
-            metricsEl.innerHTML = '';
-            metricsEl.style.display = 'none';
-          }
+          statusPanel.style.display = 'none';
         }
 
         if (map) map.closePopup();
