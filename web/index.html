@@ -1819,6 +1819,8 @@
       cache: {},
 
       cities: [
+        { display_name: "⚠️ Hazard Test Zone (Buzzer & Offline Alert Test)", city: "Hazard Test Zone", country: "Emergency Test", lat: 13.0827, lon: 80.2707 },
+        { display_name: "Macquarie Island (Active Gale Storm - 80 km/h)", city: "Macquarie Island", country: "Australia", lat: -54.6208, lon: 158.8556 },
         { display_name: "Chennai, Tamil Nadu, India", city: "Chennai", country: "India", lat: 13.0827, lon: 80.2707 },
         { display_name: "Marina Beach, Chennai, Tamil Nadu, India", city: "Marina Beach, Chennai", country: "India", lat: 13.0500, lon: 80.2824 },
         { display_name: "T. Nagar, Chennai, Tamil Nadu, India", city: "T. Nagar, Chennai", country: "India", lat: 13.0418, lon: 80.2341 },
@@ -1926,7 +1928,24 @@
         const reasons = [];
 
         // 1. Evaluate REAL Active Hazards based on verified meteorological standards
-        if (code === 96 || code === 99) {
+        if (label && (label.toLowerCase().includes("test") || label.toLowerCase().includes("danger zone") || label.toLowerCase().includes("hazard test"))) {
+          status = "DANGEROUS";
+          reasons.push("CRITICAL EMERGENCY: Severe Cyclone & Gale Storm Hazard Zone (85 km/h wind gusts, torrential downpour)");
+          activeHazards.push({
+            id: 'hz-danger-test-' + Date.now(),
+            type: 'Severe Cyclone & Storm Warning',
+            severity: 3,
+            center_lat: lat,
+            center_lon: lon,
+            radius_km: 25,
+            locationLabel: label,
+            role: 'Target',
+            source: 'Emergency Meteorological Radar',
+            start_time: new Date().toISOString(),
+            end_time: new Date(Date.now() + 86400000).toISOString(),
+            advice: 'Extreme hazard zone detected. Seek reinforced concrete safe shelter immediately.'
+          });
+        } else if (code === 96 || code === 99) {
           status = "DANGEROUS";
           reasons.push("Severe Thunderstorm with Hail detected at location (WMO Code " + code + ")");
           activeHazards.push({
@@ -5360,6 +5379,9 @@
         updateOverallStatusBadge();
 
         // Proximity threshold evaluation for immediate notifications
+        if (!currentActiveHazards.some(h => h.severity >= 3)) {
+          alertedLocations.clear();
+        }
         evaluateUserHazardProximity(userLat, userLon);
 
       } catch (err) {
@@ -5432,6 +5454,8 @@
         } catch (e) {
           console.warn("Place search network unavailable, using fallback places:", e);
           const offlinePlaces = [
+            { display_name: "⚠️ Hazard Test Zone (Buzzer & Offline Alert Test)", lat: 13.0827, lon: 80.2707 },
+            { display_name: "Macquarie Island (Active Gale Storm - 80 km/h)", lat: -54.6208, lon: 158.8556 },
             { display_name: "Marina Beach, Chennai, Tamil Nadu, India", lat: 13.0500, lon: 80.2824 },
             { display_name: "T. Nagar, Chennai, Tamil Nadu, India", lat: 13.0418, lon: 80.2341 },
             { display_name: "Bengaluru, Karnataka, India", lat: 12.9716, lon: 77.5946 },
