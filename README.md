@@ -78,16 +78,16 @@ flowchart TD
     FS -->|Critical Hazard| NOTIF
     FS -->|Audible Alarm| TONE
 
-    AB <-->|Bidirectional Bridge| Web_Client
+    AB <-->|Bidirectional Bridge| RHE
     AB --> TONE
     AB --> VIB
     AB --> NOTIF
 
-    Web_Client <-->|Live Meteorological Checks| OM
-    Web_Client <-->|Highway Vector Polylines| OSRM
-    Web_Client <-->|Place Search & Reverse Geocode| GEO
-    Optional_Backend <--> GDACS
-    Web_Client -.->|Optional REST Sync| FAS
+    RHE <-->|Live Meteorological Checks| OM
+    RHE <-->|Highway Vector Polylines| OSRM
+    RHE <-->|Place Search & Reverse Geocode| GEO
+    FAS <--> GDACS
+    RHE -.->|Optional REST Sync| FAS
 ```
 
 ---
@@ -264,7 +264,7 @@ sequenceDiagram
             Bridge->>HW: Vibrate Motor (800ms on / 200ms off)
             Bridge->>HW: Post NotificationCompat (PRIORITY_MAX)
         and WebView Audio & Dialog
-            Bridge->>UI: Render #buzzerModal
+            Bridge->>UI: Render Buzzer Warning Modal
             Bridge->>UI: Play Web Audio Oscillator (880Hz + LFO)
         end
         User->>UI: Click "Silence Alarm & Acknowledge"
@@ -329,14 +329,14 @@ sequenceDiagram
     User->>Router: Input Starting Point (Source) & Destination
     Router->>Map: Place Green Marker (Source) & Red Marker (Dest)
     Router->>Map: Fit Bounds to include both markers
-    Router->>OSRM: GET /route/v1/driving/{origLon},{origLat};{destLon},{destLat}
+    Router->>OSRM: Request Highway Route (Origin to Destination)
     OSRM-->>Router: Road Geometry Coordinates (GeoJSON Polyline)
     Router->>Hazard: Evaluate Hazards along corridor
     alt Route Collides with Hazard
-        Router->>Map: Draw Red Polyline (#DC2626) with White Casing
+        Router->>Map: Draw Red Polyline with White Casing
         Router->>Router: Display Alert Cards for Destination Route
     else Route is Clear
-        Router->>Map: Draw Blue Polyline (#2563EB) with White Casing
+        Router->>Map: Draw Blue Polyline with White Casing
         Router->>Router: Display All-Clear Safe Corridor Card
     end
 ```
