@@ -2331,7 +2331,32 @@
 
       if (path.includes('/api/places/search')) {
         const q = (params.get('q') || '').trim();
-        // 1. Try Photon Geocoder API (Free, fast, OpenStreetMap, zero CORS or rate issues)
+        // 1. Try Open-Meteo Geocoding API (Fast, global, completely free, 0 rate limit)
+        if (q.length >= 2) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
+            const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`, { signal: controller.signal });
+            clearTimeout(timer);
+            if (r.ok) {
+              const geoData = await r.json();
+              if (geoData && geoData.results && geoData.results.length > 0) {
+                const results = geoData.results.map(it => {
+                  const parts = [it.name, it.admin1, it.country].filter(Boolean);
+                  return {
+                    display_name: parts.join(', '),
+                    city: it.name,
+                    lat: it.latitude,
+                    lon: it.longitude
+                  };
+                });
+                return { ok: true, json: async () => ({ count: results.length, results }) };
+              }
+            }
+          } catch(e) {}
+        }
+
+        // 2. Try Photon Geocoder API (Free, fast, OpenStreetMap)
         if (q.length >= 2) {
           try {
             const controller = new AbortController();
@@ -2448,6 +2473,7 @@
     let userLat = 13.0827; // Chennai Default or GPS
     let userLon = 80.2707;
     let userName = "Chennai, India";
+    let isManualLocationSet = false;
 
     let sourceLat = 13.0827;
     let sourceLon = 80.2707;
@@ -4172,15 +4198,22 @@
 
     // Auto-detect GPS with Comprehensive Fallback & Permission Denial Handling
     function autoDetectGPS(isManualRetry = false) {
+      if (isManualRetry) {
+        isManualLocationSet = false;
+      } else if (isManualLocationSet) {
+        return; // User has already chosen a location manually
+      }
+
       const banner = document.getElementById('locationPermissionBanner');
       const changeBtn = document.getElementById('btnManualLocationChange');
 
-      // Immediately assess default location (Chennai) without delay so cards and weather chips appear instantly
+      // Immediately assess default location without delay so cards and weather chips appear instantly
       assessLocation(userLat, userLon, userName);
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           pos => {
+            if (isManualLocationSet) return;
             userLat = pos.coords.latitude;
             userLon = pos.coords.longitude;
             sourceLat = userLat;
@@ -4338,6 +4371,15 @@
       if (results) results.style.display = 'none';
     }
 
+    let currentPickerResults = [];
+
+    function selectPickerResult(idx) {
+      const it = currentPickerResults[idx];
+      if (it) {
+        selectQuickLocation(it.display_name, it.lat, it.lon);
+      }
+    }
+
     function handleLocPickerInput(val) {
       const clearBtn = document.getElementById('locPickerClearBtn');
       if (clearBtn) clearBtn.style.display = val ? 'block' : 'none';
@@ -4351,12 +4393,13 @@
 
       locPickerDebounce = setTimeout(async () => {
         try {
-          const res = await apiFetch(`${API_BASE}/api/places/search?q=${encodeURIComponent(val.trim())}&limit=5&lang=${currentLanguage}`);
+          const res = await apiFetch(`${API_BASE}/api/places/search?q=${encodeURIComponent(val.trim())}&limit=6&lang=${currentLanguage}`);
           const data = await res.json();
           const items = data.results || [];
+          currentPickerResults = items;
           if (items.length > 0 && resultsEl) {
-            resultsEl.innerHTML = items.map(it => `
-              <div class="loc-search-item" onclick="selectQuickLocation('${(it.display_name).replace(/'/g, "\\'")}', ${it.lat}, ${it.lon})">
+            resultsEl.innerHTML = items.map((it, idx) => `
+              <div class="loc-search-item" onclick="selectPickerResult(${idx})">
                 <strong>📍 ${it.display_name.split(',').slice(0, 2).join(', ')}</strong>
                 <div style="font-size: 11px; color: #64748B;">${it.display_name}</div>
               </div>
@@ -4379,6 +4422,7 @@
       } else if (pickerTarget === 'source') {
         updateSourceLocation(fLat, fLon, name);
       } else {
+        isManualLocationSet = true;
         userLat = fLat;
         userLon = fLon;
         sourceLat = userLat;
@@ -4398,17 +4442,27 @@
         initMapIfNeeded();
         if (map && mapInitialized) {
           renderUserLocationMarker(userLat, userLon, userName);
-          map.setView([userLat, userLon], 12);
+          map.invalidateSize();
+          map.setView([userLat, userLon], 13);
+          if (userLocationMarker) {
+            userLocationMarker.openPopup();
+          }
         }
 
-        assessLocation(userLat, userLon, userName);
+        // Immediately update safe shelters for the new location
+        const shelters = SafeShelterEngine.getShelters(userLat, userLon);
+        renderSheltersList(shelters);
         renderSheltersOnMap(userLat, userLon);
+
+        // Assess location and load real-time unified alerts stream
+        assessLocation(userLat, userLon, userName);
       }
 
       closeLocationPickerModal();
     }
 
     function detectGPSFromPicker() {
+      isManualLocationSet = false;
       closeLocationPickerModal();
       autoDetectGPS(true);
     }
@@ -5021,10 +5075,28 @@
       if (alertCards.length > 0) {
         feedEl.innerHTML = alertCards.join('');
       } else {
+        const displayCity = currentAssessedName || userName || "Selected Location";
+        const tempText = document.getElementById('currentTempGlance')?.innerText || '--°C';
+        const windText = document.getElementById('currentWindGlance')?.innerText || '-- km/h';
+        const rainText = document.getElementById('currentRainGlance')?.innerText || '0.0 mm';
+        const assessedTime = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+
         feedEl.innerHTML = `
-          <div class="all-clear-box">
-            <span style="font-size: 20px;">✅</span>
-            <span>${t('all_clear', 'All clear: No severe weather or disaster hazards detected in this region for the selected timeframe.')}</span>
+          <div class="all-clear-box" style="flex-direction: column; align-items: flex-start; gap: 8px; width: 100%;">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 20px;">✅</span>
+                <span style="font-size: 13px; font-weight: 800; color: #166534;">📍 ${displayCity}</span>
+              </div>
+              <span class="badge badge-safe">${t('status_safe', 'SAFE')}</span>
+            </div>
+            <div style="font-size: 11.5px; color: #15803D; line-height: 1.4;">
+              ${t('all_clear', 'All clear: No severe weather or disaster hazards detected in this region for the selected timeframe.')}
+            </div>
+            <div style="font-size: 11px; color: #475569; border-top: 1px solid #BBF7D0; padding-top: 6px; width: 100%; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
+              <span>🌡️ ${tempText} | 💨 ${windText} | 🌧️ ${rainText}</span>
+              <span>🕒 ${assessedTime}</span>
+            </div>
           </div>
         `;
       }
@@ -5223,6 +5295,7 @@
     if (navigator.geolocation) {
       navigator.geolocation.watchPosition(
         pos => {
+          if (isManualLocationSet) return; // Do not overwrite user-selected manual location!
           userLat = pos.coords.latitude;
           userLon = pos.coords.longitude;
           if (mapInitialized && userLocationMarker) {
@@ -5369,6 +5442,11 @@
       }
       if (destMarker) {
         destMarker.bindPopup(`<b>Destination:</b><br>${formatCleanLocation(destName)}`);
+        destMarker.openPopup();
+      }
+      if (map) {
+        map.invalidateSize();
+        map.setView([lat, lon], 12);
       }
       
       // Update destination hazard alerts feed without affecting Current Location
