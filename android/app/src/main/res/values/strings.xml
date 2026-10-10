@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TravelTech</string>
+    <string name="server_settings">Server Settings</string>
+    <string name="server_ip_hint">Backend URL (e.g. http://10.0.2.2:8000)</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="channel_emergency_name">Emergency Disaster Alerts</string>
+    <string name="channel_emergency_desc">High priority alerts for immediate disaster threats and severe weather</string>
+</resources>
